@@ -7,7 +7,9 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <deque>
 #include <chrono>
+#include <mutex>
 
 #include "common.hpp"
 #include "serializer.hpp"
@@ -22,6 +24,42 @@ private:
     DBusConnection* conn_;
     bool connected_;
 
+    struct ChangedEvent {
+        std::string message;
+        int32_t counter = 0;
+    };
+
+    struct NetworkQualityEvent {
+        std::string quality;
+        std::string details;
+        int32_t counter = 0;
+    };
+
+    struct GenericEvent {
+        std::string eventType;
+        std::string message;
+        int32_t counter = 0;
+        std::string source;
+    };
+
+    static constexpr size_t kMaxQueuedEvents = 128;
+
+    std::deque<ChangedEvent> changedQueue_;
+    std::deque<NetworkQualityEvent> qualityQueue_;
+    std::deque<GenericEvent> eventQueue_;
+    std::string lastQualityError_;
+    bool qualitySubscribed_;
+    mutable std::mutex ioMutex_;
+    std::mutex queueMutex_;
+
+    template <typename T>
+    void pushBounded(std::deque<T>& queue, const T& event) {
+        if (queue.size() >= kMaxQueuedEvents) {
+            queue.pop_front();
+        }
+        queue.push_back(event);
+    }
+
     // 初始化DBus连接
     bool initConnection() {
         DBusError err;
@@ -32,16 +70,224 @@ private:
             dbus_error_free(&err);
         }
         connected_ = (conn_ != nullptr);
+        qualitySubscribed_ = false;
         return connected_;
     }
 
+    bool isConnectedLocked() const {
+        return connected_ && conn_ != nullptr;
+    }
+
+    bool ensureNetworkQualityMatch(std::string& errorMsg) {
+        std::string rule = std::string("type='signal',interface='") + kInterface + "',member='" + kSignalNetworkQualityChanged + "'";
+        DBusError err;
+        dbus_error_init(&err);
+
+        {
+            std::lock_guard<std::mutex> lk(ioMutex_);
+            if (!isConnectedLocked()) {
+                errorMsg = "客户端未连接";
+                return false;
+            }
+            if (qualitySubscribed_) {
+                return true;
+            }
+
+            dbus_bus_add_match(conn_, rule.c_str(), &err);
+            dbus_connection_flush(conn_);
+            if (!dbus_error_is_set(&err)) {
+                qualitySubscribed_ = true;
+                return true;
+            }
+        }
+
+        errorMsg = std::string("添加网络质量事件匹配规则失败: ") + err.message;
+        dbus_error_free(&err);
+        return false;
+    }
+
+    bool parseStringCounterSignal(DBusMessage* msg, std::string& message, int32_t& counter, const char* context) {
+        const char* text = nullptr;
+        DBusError e;
+        dbus_error_init(&e);
+
+        if (dbus_message_get_args(msg, &e, DBUS_TYPE_STRING, &text, DBUS_TYPE_INT32, &counter, DBUS_TYPE_INVALID)) {
+            message = text ? std::string(text) : "";
+            return true;
+        }
+
+        if (dbus_error_is_set(&e)) {
+            LOG_ERROR(LogModule::CLIENT, "解析" << context << "失败: " << e.message);
+            dbus_error_free(&e);
+        }
+        return false;
+    }
+
+    bool parseNetworkQualitySignal(DBusMessage* msg, NetworkQualityEvent& event, std::string& errorMsg) {
+        const char* quality = nullptr;
+        const char* details = nullptr;
+        DBusError e;
+        dbus_error_init(&e);
+
+        if (dbus_message_get_args(msg, &e,
+                                  DBUS_TYPE_STRING, &quality,
+                                  DBUS_TYPE_STRING, &details,
+                                  DBUS_TYPE_INT32, &event.counter,
+                                  DBUS_TYPE_INVALID)) {
+            event.quality = quality ? std::string(quality) : "";
+            event.details = details ? std::string(details) : "";
+            return true;
+        }
+
+        if (dbus_error_is_set(&e)) {
+            errorMsg = std::string("解析网络质量信号失败: ") + e.message;
+            LOG_ERROR(LogModule::CLIENT, errorMsg);
+            dbus_error_free(&e);
+        } else {
+            errorMsg = "解析网络质量信号失败";
+            LOG_ERROR(LogModule::CLIENT, errorMsg);
+        }
+        return false;
+    }
+
+    bool dispatchMessage(DBusMessage* msg) {
+        if (!msg) {
+            return false;
+        }
+
+        if (dbus_message_is_signal(msg, kInterface, kSignalChanged)) {
+            ChangedEvent event;
+            if (!parseStringCounterSignal(msg, event.message, event.counter, "网络状态变化信号")) {
+                return false;
+            }
+
+            LOG_INFO(LogModule::CLIENT, "收到网络状态变化: '" << event.message << "', counter=" << event.counter);
+            {
+                std::lock_guard<std::mutex> lk(queueMutex_);
+                pushBounded(changedQueue_, event);
+            }
+
+            // 读取服务端序列化到文件的信号负载
+            ChangedPayload restored{};
+            std::string ferr;
+            if (deserializeChangedPayloadFromFile(kSignalSerializedFile, &restored, &ferr)) {
+                LOG_INFO(LogModule::CLIENT, "从文件读取的详细信息: text='" << restored.message << "', counter=" << restored.counter);
+            }
+            return true;
+        }
+
+        if (dbus_message_is_signal(msg, kInterface, kSignalNetworkQualityChanged)) {
+            NetworkQualityEvent event;
+            std::string errorMsg;
+            if (!parseNetworkQualitySignal(msg, event, errorMsg)) {
+                std::lock_guard<std::mutex> lk(queueMutex_);
+                lastQualityError_ = errorMsg;
+                return false;
+            }
+
+            LOG_INFO(LogModule::CLIENT, "收到网络质量变化: quality='" << event.quality
+                << "', details='" << event.details << "', counter=" << event.counter);
+
+            {
+                std::lock_guard<std::mutex> lk(queueMutex_);
+                lastQualityError_.clear();
+                pushBounded(qualityQueue_, event);
+            }
+            return true;
+        }
+
+        if (dbus_message_is_signal(msg, kInterface, kSignalInterfaceChanged) ||
+            dbus_message_is_signal(msg, kInterface, kSignalConnectionModeChanged)) {
+            GenericEvent event;
+            event.eventType = getSignalMember(msg);
+            event.source = "event_manager";
+            if (!parseStringCounterSignal(msg, event.message, event.counter, "事件信号")) {
+                return false;
+            }
+
+            LOG_INFO(LogModule::CLIENT, "收到事件: type='" << event.eventType
+                << "', message='" << event.message << "', counter=" << event.counter);
+            {
+                std::lock_guard<std::mutex> lk(queueMutex_);
+                pushBounded(eventQueue_, event);
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    void dispatchPendingMessages(int timeoutMs) {
+        std::vector<DBusMessage*> messages;
+        {
+            std::lock_guard<std::mutex> lk(ioMutex_);
+            if (!isConnectedLocked()) {
+                return;
+            }
+
+            dbus_connection_read_write(conn_, timeoutMs);
+
+            while (DBusMessage* msg = dbus_connection_pop_message(conn_)) {
+                messages.push_back(msg);
+            }
+        }
+
+        for (DBusMessage* msg : messages) {
+            dispatchMessage(msg);
+            dbus_message_unref(msg);
+        }
+    }
+
+    bool popChangedEvent(ChangedEvent& event) {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        if (changedQueue_.empty()) {
+            return false;
+        }
+        event = changedQueue_.front();
+        changedQueue_.pop_front();
+        return true;
+    }
+
+    bool popNetworkQualityEvent(NetworkQualityEvent& event) {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        if (qualityQueue_.empty()) {
+            return false;
+        }
+        event = qualityQueue_.front();
+        qualityQueue_.pop_front();
+        return true;
+    }
+
+    bool popGenericEvent(GenericEvent& event) {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        if (eventQueue_.empty()) {
+            return false;
+        }
+        event = eventQueue_.front();
+        eventQueue_.pop_front();
+        return true;
+    }
+
+    bool takeQualityError(std::string& errorMsg) {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        if (lastQualityError_.empty()) {
+            return false;
+        }
+        errorMsg = lastQualityError_;
+        lastQualityError_.clear();
+        return true;
+    }
+
+    std::string getSignalMember(DBusMessage* msg) {
+        const char* member = dbus_message_get_member(msg);
+        return member ? std::string(member) : "";
+    }
+
 public:
-    WeakNetClient() : conn_(nullptr), connected_(false) {}
+    WeakNetClient() : conn_(nullptr), connected_(false), qualitySubscribed_(false) {}
     
     ~WeakNetClient() {
-        if (conn_) {
-            dbus_connection_unref(conn_);
-        }
+        disconnect();
     }
 
     // 连接到服务
@@ -51,7 +297,8 @@ public:
 
     // 检查连接状态
     bool isConnected() const {
-        return connected_ && conn_ != nullptr;
+        std::lock_guard<std::mutex> lk(ioMutex_);
+        return isConnectedLocked();
     }
 
     // 调用GetInterfaces方法获取当前网络接口列表
@@ -70,7 +317,16 @@ public:
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(conn_, msg, 2000, &err);
+        DBusMessage* reply = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(ioMutex_);
+            if (!isConnectedLocked()) {
+                dbus_message_unref(msg);
+                errorMsg = "客户端未连接";
+                return false;
+            }
+            reply = dbus_connection_send_with_reply_and_block(conn_, msg, 2000, &err);
+        }
         dbus_message_unref(msg);
         
         if (dbus_error_is_set(&err)) {
@@ -128,7 +384,16 @@ public:
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(conn_, msg, 2000, &err);
+        DBusMessage* reply = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(ioMutex_);
+            if (!isConnectedLocked()) {
+                dbus_message_unref(msg);
+                errorMsg = "客户端未连接";
+                return false;
+            }
+            reply = dbus_connection_send_with_reply_and_block(conn_, msg, 2000, &err);
+        }
         dbus_message_unref(msg);
 
         if (dbus_error_is_set(&err)) {
@@ -169,8 +434,14 @@ public:
         dbus_error_init(&err);
 
         std::string rule = std::string("type='signal',interface='") + kInterface + "',member='" + kSignalChanged + "'";
-        dbus_bus_add_match(conn_, rule.c_str(), &err);
-        dbus_connection_flush(conn_);
+        {
+            std::lock_guard<std::mutex> lk(ioMutex_);
+            if (!isConnectedLocked()) {
+                return false;
+            }
+            dbus_bus_add_match(conn_, rule.c_str(), &err);
+            dbus_connection_flush(conn_);
+        }
         
         if (dbus_error_is_set(&err)) {
             LOG_ERROR(LogModule::CLIENT, "添加匹配规则失败: " << err.message);
@@ -185,8 +456,7 @@ public:
         const auto statusInterval = std::chrono::seconds(5);
         
         while (true) {
-            dbus_connection_read_write(conn_, 100);
-            DBusMessage* msg = dbus_connection_pop_message(conn_);
+            dispatchPendingMessages(100);
             
             // 定期输出客户端状态
             auto now = std::chrono::steady_clock::now();
@@ -194,37 +464,14 @@ public:
                 LOG_INFO(LogModule::CLIENT, "CLIENT_STATUS: 连接正常，等待网络变化信号...");
                 lastStatusTime = now;
             }
-            
-            if (!msg) continue;
 
-            if (dbus_message_is_signal(msg, kInterface, kSignalChanged)) {
-                const char* text = nullptr;
-                int32_t counter = 0;
-                DBusError e;
-                dbus_error_init(&e);
-                
-                if (dbus_message_get_args(msg, &e, DBUS_TYPE_STRING, &text, DBUS_TYPE_INT32, &counter, DBUS_TYPE_INVALID)) {
-                    LOG_INFO(LogModule::CLIENT, "收到网络状态变化: '" << (text ? text : "<null>") << "', counter=" << counter);
-                    
-                    // 调用回调函数（如果提供）
-                    if (callback && callback(text ? std::string(text) : "", counter)) {
-                        dbus_message_unref(msg);
-                        break; // 回调返回true时停止监听
-                    }
-                } else if (dbus_error_is_set(&e)) {
-                    LOG_ERROR(LogModule::CLIENT, "解析信号失败: " << e.message);
-                    dbus_error_free(&e);
-                }
-
-                // 读取服务端序列化到文件的信号负载
-                ChangedPayload restored{};
-                std::string ferr;
-                if (deserializeChangedPayloadFromFile(kSignalSerializedFile, &restored, &ferr)) {
-                    LOG_INFO(LogModule::CLIENT, "从文件读取的详细信息: text='" << restored.message << "', counter=" << restored.counter);
+            ChangedEvent event;
+            while (popChangedEvent(event)) {
+                // 调用回调函数（如果提供）
+                if (callback && callback(event.message, event.counter)) {
+                    return true; // 回调返回true时停止监听
                 }
             }
-
-            dbus_message_unref(msg);
         }
         return true;
     }
@@ -235,25 +482,15 @@ public:
             return false;
         }
 
-        dbus_connection_read_write(conn_, 0); // 非阻塞轮询
-        DBusMessage* msg = dbus_connection_pop_message(conn_);
-        if (!msg) return false;
+        dispatchPendingMessages(0);
 
-        if (dbus_message_is_signal(msg, kInterface, kSignalChanged)) {
-            const char* text = nullptr;
-            DBusError e;
-            dbus_error_init(&e);
-            
-            if (dbus_message_get_args(msg, &e, DBUS_TYPE_STRING, &text, DBUS_TYPE_INT32, &counter, DBUS_TYPE_INVALID)) {
-                message = text ? std::string(text) : "";
-                dbus_message_unref(msg);
-                return true;
-            } else if (dbus_error_is_set(&e)) {
-                dbus_error_free(&e);
-            }
+        ChangedEvent event;
+        if (popChangedEvent(event)) {
+            message = event.message;
+            counter = event.counter;
+            return true;
         }
 
-        dbus_message_unref(msg);
         return false;
     }
 
@@ -303,7 +540,16 @@ public:
         DBusError err;
         dbus_error_init(&err);
 
-        DBusMessage* reply = dbus_connection_send_with_reply_and_block(conn_, msg, 10000, &err); // 10秒超时
+        DBusMessage* reply = nullptr;
+        {
+            std::lock_guard<std::mutex> lk(ioMutex_);
+            if (!isConnectedLocked()) {
+                dbus_message_unref(msg);
+                errorMsg = "客户端未连接";
+                return false;
+            }
+            reply = dbus_connection_send_with_reply_and_block(conn_, msg, 10000, &err); // 10秒超时
+        }
         dbus_message_unref(msg);
         
         if (dbus_error_is_set(&err)) {
@@ -336,29 +582,37 @@ public:
 
     // 断开连接
     void disconnect() {
+        std::lock_guard<std::mutex> lk(ioMutex_);
         if (conn_) {
             dbus_connection_unref(conn_);
             conn_ = nullptr;
             connected_ = false;
+            qualitySubscribed_ = false;
         }
-    }
-
-    // 获取连接对象（用于C接口）
-    DBusConnection* getConnection() const {
-        return conn_;
     }
 
     // 订阅特定事件类型
     bool subscribeToEvent(const std::string& eventType) {
         if (!isConnected()) return false;
 
+        if (eventType == kSignalNetworkQualityChanged) {
+            LOG_ERROR(LogModule::CLIENT, "网络质量事件请使用 weaknet_check_network_quality 或 weaknet_subscribe_network_quality");
+            return false;
+        }
+
         DBusError err;
         dbus_error_init(&err);
 
         // 添加事件信号匹配规则
         std::string rule = std::string("type='signal',interface='") + kInterface + "',member='" + eventType + "'";
-        dbus_bus_add_match(conn_, rule.c_str(), &err);
-        dbus_connection_flush(conn_);
+        {
+            std::lock_guard<std::mutex> lk(ioMutex_);
+            if (!isConnectedLocked()) {
+                return false;
+            }
+            dbus_bus_add_match(conn_, rule.c_str(), &err);
+            dbus_connection_flush(conn_);
+        }
         
         if (dbus_error_is_set(&err)) {
             LOG_ERROR(LogModule::CLIENT, "添加事件匹配规则失败: " << err.message);
@@ -372,21 +626,9 @@ public:
 
     // 订阅网络质量事件
     bool subscribeToNetworkQuality(bool (*callback)(const std::string& quality, const std::string& details, int32_t counter) = nullptr) {
-        if (!isConnected()) {
-            return false;
-        }
-
-        DBusError err;
-        dbus_error_init(&err);
-
-        // 订阅网络质量变化信号
-        std::string rule = std::string("type='signal',interface='") + kInterface + "',member='" + kSignalNetworkQualityChanged + "'";
-        dbus_bus_add_match(conn_, rule.c_str(), &err);
-        dbus_connection_flush(conn_);
-        
-        if (dbus_error_is_set(&err)) {
-            LOG_ERROR(LogModule::CLIENT, "添加网络质量事件匹配规则失败: " << err.message);
-            dbus_error_free(&err);
+        std::string errorMsg;
+        if (!ensureNetworkQualityMatch(errorMsg)) {
+            LOG_ERROR(LogModule::CLIENT, errorMsg);
             return false;
         }
 
@@ -397,8 +639,7 @@ public:
         const auto statusInterval = std::chrono::seconds(5);
         
         while (true) {
-            dbus_connection_read_write(conn_, 100);
-            DBusMessage* msg = dbus_connection_pop_message(conn_);
+            dispatchPendingMessages(100);
             
             // 定期输出客户端状态
             auto now = std::chrono::steady_clock::now();
@@ -406,32 +647,14 @@ public:
                 LOG_INFO(LogModule::CLIENT, "CLIENT_STATUS: 连接正常，等待网络质量变化信号...");
                 lastStatusTime = now;
             }
-            
-            if (!msg) continue;
 
-            if (dbus_message_is_signal(msg, kInterface, kSignalNetworkQualityChanged)) {
-                const char* quality = nullptr;
-                const char* details = nullptr;
-                int32_t counter = 0;
-                DBusError e;
-                dbus_error_init(&e);
-                
-                if (dbus_message_get_args(msg, &e, DBUS_TYPE_STRING, &quality, DBUS_TYPE_STRING, &details, DBUS_TYPE_INT32, &counter, DBUS_TYPE_INVALID)) {
-                    LOG_INFO(LogModule::CLIENT, "收到网络质量变化: quality='" << (quality ? quality : "<null>") 
-                        << "', details='" << (details ? details : "<null>") << "', counter=" << counter);
-                    
-                    // 调用回调函数（如果提供）
-                    if (callback && callback(quality ? std::string(quality) : "", details ? std::string(details) : "", counter)) {
-                        dbus_message_unref(msg);
-                        break; // 回调返回true时停止监听
-                    }
-                } else if (dbus_error_is_set(&e)) {
-                    LOG_ERROR(LogModule::CLIENT, "解析网络质量信号失败: " << e.message);
-                    dbus_error_free(&e);
+            NetworkQualityEvent event;
+            while (popNetworkQualityEvent(event)) {
+                // 调用回调函数（如果提供）
+                if (callback && callback(event.quality, event.details, event.counter)) {
+                    return true; // 回调返回true时停止监听
                 }
             }
-
-            dbus_message_unref(msg);
         }
         return true;
     }
@@ -440,39 +663,38 @@ public:
     bool checkForEvents(std::string& eventType, std::string& message, int32_t& counter, std::string& source) {
         if (!isConnected()) return false;
 
-        dbus_connection_read_write(conn_, 0); // 非阻塞轮询
-        DBusMessage* msg = dbus_connection_pop_message(conn_);
-        if (!msg) return false;
+        dispatchPendingMessages(0);
 
-        // 检查是否为事件信号
-        if (dbus_message_is_signal(msg, kInterface, kSignalInterfaceChanged) ||
-            dbus_message_is_signal(msg, kInterface, kSignalConnectionModeChanged) ||
-            dbus_message_is_signal(msg, kInterface, kSignalNetworkQualityChanged)) {
-            
-            const char* signal_name = dbus_message_get_member(msg);
-            const char* text = nullptr;
-            DBusError e;
-            dbus_error_init(&e);
-            
-            if (dbus_message_get_args(msg, &e, DBUS_TYPE_STRING, &text, DBUS_TYPE_INT32, &counter, DBUS_TYPE_INVALID)) {
-                eventType = signal_name ? signal_name : "unknown";
-                message = text ? std::string(text) : "";
-                source = "event_manager";
-                dbus_message_unref(msg);
-                return true;
-            } else if (dbus_error_is_set(&e)) {
-                dbus_error_free(&e);
-            }
+        GenericEvent event;
+        if (popGenericEvent(event)) {
+            eventType = event.eventType;
+            message = event.message;
+            counter = event.counter;
+            source = event.source;
+            return true;
         }
 
-        dbus_message_unref(msg);
         return false;
     }
 
-private:
-    std::string getSignalMember(DBusMessage* msg) {
-        const char* member = dbus_message_get_member(msg);
-        return member ? std::string(member) : "";
+    // 非阻塞检查网络质量事件
+    bool checkNetworkQuality(std::string& quality, std::string& details, int32_t& counter, std::string& errorMsg) {
+        if (!ensureNetworkQualityMatch(errorMsg)) {
+            return false;
+        }
+
+        dispatchPendingMessages(0);
+
+        NetworkQualityEvent event;
+        if (popNetworkQualityEvent(event)) {
+            quality = event.quality;
+            details = event.details;
+            counter = event.counter;
+            return true;
+        }
+
+        takeQualityError(errorMsg);
+        return false;
     }
 };
 
@@ -609,10 +831,9 @@ extern "C" bool weaknet_unsubscribe_event(const char* event_type) {
 
 // 获取支持的事件类型列表
 extern "C" bool weaknet_get_event_types(char* buffer, size_t buffer_size, char* error_buffer, size_t error_size) {
-    snprintf(buffer, buffer_size, "%s,%s,%s", 
+    snprintf(buffer, buffer_size, "%s,%s",
              weaknet_dbus::kSignalInterfaceChanged, 
-             weaknet_dbus::kSignalConnectionModeChanged, 
-             weaknet_dbus::kSignalNetworkQualityChanged);
+             weaknet_dbus::kSignalConnectionModeChanged);
     return true;
 }
 
@@ -684,31 +905,15 @@ extern "C" bool weaknet_check_network_quality(char* quality_buffer, size_t quali
         return false;
     }
 
-    if (!weaknet_dbus::g_client->isConnected()) return false;
-
-    dbus_connection_read_write(weaknet_dbus::g_client->getConnection(), 0); // 非阻塞轮询
-    DBusMessage* msg = dbus_connection_pop_message(weaknet_dbus::g_client->getConnection());
-    if (!msg) return false;
-
-    if (dbus_message_is_signal(msg, weaknet_dbus::kInterface, weaknet_dbus::kSignalNetworkQualityChanged)) {
-        const char* quality = nullptr;
-        const char* details = nullptr;
-        DBusError e;
-        dbus_error_init(&e);
-        
-        if (dbus_message_get_args(msg, &e, DBUS_TYPE_STRING, &quality, DBUS_TYPE_STRING, &details, DBUS_TYPE_INT32, counter, DBUS_TYPE_INVALID)) {
-            snprintf(quality_buffer, quality_size, "%s", quality ? quality : "");
-            snprintf(details_buffer, details_size, "%s", details ? details : "");
-            dbus_message_unref(msg);
-            return true;
-        } else if (dbus_error_is_set(&e)) {
-            snprintf(error_buffer, error_size, "解析网络质量信号失败: %s", e.message);
-            dbus_error_free(&e);
-        }
+    std::string quality, details;
+    std::string errorMsg;
+    if (weaknet_dbus::g_client->checkNetworkQuality(quality, details, *counter, errorMsg)) {
+        snprintf(quality_buffer, quality_size, "%s", quality.c_str());
+        snprintf(details_buffer, details_size, "%s", details.c_str());
+        return true;
     }
 
-    dbus_message_unref(msg);
-    snprintf(error_buffer, error_size, "没有检测到网络质量事件");
+    snprintf(error_buffer, error_size, "%s", errorMsg.empty() ? "没有检测到网络质量事件" : errorMsg.c_str());
     return false;
 }
 

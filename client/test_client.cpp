@@ -149,8 +149,7 @@ bool testEventSystem() {
     // 测试订阅事件
     std::vector<std::string> eventTypes = {
         "InterfaceChanged",
-        "ConnectionModeChanged", 
-        "NetworkQualityChanged"
+        "ConnectionModeChanged"
     };
     
     for (const auto& eventType : eventTypes) {
@@ -189,15 +188,6 @@ bool testNetworkQualityEvents() {
     
     char quality[256], details[1024], error[256];
     int32_t counter;
-    
-    // 先订阅网络质量事件
-    printf("   🔔 订阅网络质量事件...\n");
-    if (weaknet_subscribe_event("NetworkQualityChanged", nullptr)) {
-        printf("     ✅ 网络质量事件订阅成功\n");
-    } else {
-        printf("     ❌ 网络质量事件订阅失败\n");
-        return false;
-    }
     
     // 测试非阻塞检查网络质量事件
     printf("   🔍 检查网络质量事件 (10秒)...\n");

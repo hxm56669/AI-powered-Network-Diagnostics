@@ -1,0 +1,77 @@
+version: 1
+rules:
+  - rule_id: rtt.high
+    version: 2
+    metrics: [icmp_rtt_ms]
+    scope_kinds: [interface_target, interface]
+    conditions: [{field: summary.p95, op: gt, value: 100}]
+    symptom: high_rtt
+    explanation: 成功探测的 RTT p95 偏高，不能据此定位具体路径故障。
+    counterevidence: [需比较网关和外部目标，排除目标端 ICMP 限速。]
+  - rule_id: wifi.weak
+    version: 1
+    metrics: [wifi_rssi_dbm]
+    scope_kinds: [interface]
+    conditions: [{field: summary.median, op: lt, value: -75}]
+    symptom: low_rssi
+    explanation: RSSI 中位数偏低，仅提示无线信号偏弱。
+    counterevidence: [强信号时仍有同等延迟，不支持仅用信号强度解释问题。]
+  - rule_id: tcp.retransmission
+    version: 1
+    metrics: [tcp_segments]
+    scope_kinds: [host_netns]
+    conditions: [{field: summary.retrans_out_ratio, op: ge, value: 0.01}]
+    symptom: tcp_retransmission
+    explanation: 主机网络命名空间的 TCP 重传比例升高，不等于接口丢包率。
+    counterevidence: [需连接级证据确认受影响连接及路径。]
+  - rule_id: tcp.logged_retransmission
+    version: 1
+    metrics: [tcp_retransmission_log]
+    scope_kinds: [interface]
+    conditions: [{field: summary.median, op: ge, value: 1}]
+    symptom: tcp_retransmission
+    explanation: 日志记录的 TCP 重传百分比偏高，不能据此推断接口链路丢包率。
+    counterevidence: [日志缺少完整采样区间和连接范围，需进一步核对。]
+  - rule_id: probe.timeout
+    version: 1
+    metrics: [icmp_probe_result]
+    scope_kinds: [interface_target]
+    conditions: [{field: summary.timeouts, op: gt, value: 0}]
+    symptom: probe_failure
+    explanation: ICMP 已发起的探测存在超时。
+    counterevidence: [仅 ICMP 失败不能证明业务不可用。]
+  - rule_id: probe.unreachable
+    version: 1
+    metrics: [icmp_probe_result]
+    scope_kinds: [interface_target]
+    conditions: [{field: summary.unreachable, op: gt, value: 0}]
+    symptom: probe_failure
+    explanation: 探测收到不可达结果。
+  - rule_id: collector.permission
+    version: 1
+    metrics: [icmp_rtt_ms, icmp_probe_result, tcp_segments, netdev_bytes, wifi_rssi_dbm, flow_top_bytes_per_s, quality_score, quality_level]
+    scope_kinds: [host_netns, interface, interface_target, flow_subset]
+    conditions: [{field: summary.status_counts.permission_denied, op: gt, value: 0}]
+    symptom: permission_denied
+    explanation: 采集器报告权限不足，不将缺测记作网络故障。
+  - rule_id: interface.down
+    version: 1
+    metrics: [link_state]
+    scope_kinds: [interface, interface_target]
+    conditions: [{field: summary.state, op: eq, value: down}]
+    symptom: interface_down
+    explanation: 窗口最后一次链路事件为断开。
+  - rule_id: wifi.declining
+    version: 1
+    metrics: [wifi_rssi_dbm]
+    scope_kinds: [interface]
+    conditions: [{field: summary.trend.direction, op: eq, value: declining}]
+    symptom: rssi_declining
+    explanation: 连续有效采样显示信号正在减弱。
+  - rule_id: wifi.abrupt_drop
+    version: 1
+    metrics: [wifi_rssi_dbm]
+    scope_kinds: [interface]
+    conditions: [{field: summary.trend.direction, op: eq, value: abrupt_drop}]
+    symptom: rssi_abrupt_drop
+    explanation: 相邻有效采样出现显著下降且窗口末端尚未恢复。

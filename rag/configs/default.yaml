@@ -1,0 +1,16 @@
+schema_version: 1
+profile: lexical-only
+data_dir: ../../var/rag
+knowledge_dir: ../knowledge
+knowledge:
+  allow_seed: false
+telemetry:
+  source: replay
+embedding:
+  provider: none
+retrieval:
+  mode: bm25
+generation:
+  provider: dashscope
+decision:
+  provider: none

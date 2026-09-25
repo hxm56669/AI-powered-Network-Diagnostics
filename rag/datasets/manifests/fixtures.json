@@ -1,0 +1,209 @@
+{
+  "schema_version": 1,
+  "purpose": "engineering_smoke",
+  "synthetic": true,
+  "annotation_status": "code_authored_engineering_expectations_not_independent_review",
+  "knowledge_cutoff": "2026-09-23T16:55:40Z",
+  "cases": [
+    {
+      "case_id": "wifi_weak_signal",
+      "group_id": "synthetic-wifi_weak_signal",
+      "origin_id": "fixture-template-wifi_weak_signal",
+      "split": "test",
+      "class": "U",
+      "causes": [],
+      "telemetry": "../fixtures/wifi_weak_signal.jsonl",
+      "request": {
+        "data_namespace": "replay:wifi-demo",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.wifi.weak_signal": 2,
+        "runbook.icmp.rtt_window": 1,
+        "runbook.tcp.retransmission_scope": 1
+      }
+    },
+    {
+      "case_id": "normal",
+      "group_id": "synthetic-normal",
+      "origin_id": "fixture-template-normal",
+      "split": "test",
+      "class": "N",
+      "causes": [],
+      "telemetry": "../fixtures/normal.jsonl",
+      "request": {
+        "data_namespace": "replay:normal",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.icmp.rtt_window": 1,
+        "runbook.netdev.idle_throughput": 1
+      }
+    },
+    {
+      "case_id": "all_timeout",
+      "group_id": "synthetic-all_timeout",
+      "origin_id": "fixture-template-all_timeout",
+      "split": "test",
+      "class": "U",
+      "causes": [],
+      "telemetry": "../fixtures/all_timeout.jsonl",
+      "request": {
+        "data_namespace": "replay:all_timeout",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.icmp.timeout": 2,
+        "runbook.route.external_path": 1
+      }
+    },
+    {
+      "case_id": "permission_denied",
+      "group_id": "synthetic-permission_denied",
+      "origin_id": "fixture-template-permission_denied",
+      "split": "test",
+      "class": "A",
+      "causes": [
+        "collector_permission_denied"
+      ],
+      "telemetry": "../fixtures/permission_denied.jsonl",
+      "request": {
+        "data_namespace": "replay:permission_denied",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.collector.permission": 2
+      }
+    },
+    {
+      "case_id": "counter_reset",
+      "group_id": "synthetic-counter_reset",
+      "origin_id": "fixture-template-counter_reset",
+      "split": "test",
+      "class": "U",
+      "causes": [],
+      "telemetry": "../fixtures/counter_reset.jsonl",
+      "request": {
+        "data_namespace": "replay:counter_reset",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.telemetry.counter_reset": 2
+      }
+    },
+    {
+      "case_id": "link_down",
+      "group_id": "synthetic-link_down",
+      "origin_id": "fixture-template-link_down",
+      "split": "test",
+      "class": "A",
+      "causes": [
+        "interface_link_down"
+      ],
+      "telemetry": "../fixtures/link_down.jsonl",
+      "request": {
+        "data_namespace": "replay:link_down",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.interface.link_down": 2
+      }
+    },
+    {
+      "case_id": "missing_data",
+      "group_id": "synthetic-missing_data",
+      "origin_id": "fixture-template-missing_data",
+      "split": "test",
+      "class": "U",
+      "causes": [],
+      "telemetry": "../fixtures/missing_data.jsonl",
+      "request": {
+        "data_namespace": "replay:missing_data",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.telemetry.freshness": 2
+      }
+    },
+    {
+      "case_id": "late_data",
+      "group_id": "synthetic-late_data",
+      "origin_id": "fixture-template-late_data",
+      "split": "test",
+      "class": "U",
+      "causes": [],
+      "telemetry": "../fixtures/late_data.jsonl",
+      "request": {
+        "data_namespace": "replay:late_data",
+        "host_id": "lab-host-01",
+        "interfaces": [
+          "wlan0"
+        ],
+        "window_start": "2026-09-22T02:00:00.000000Z",
+        "window_end": "2026-09-22T02:01:00.000000Z",
+        "as_of_received_at": "2026-09-22T02:01:01.000000Z",
+        "knowledge_cutoff": "2026-09-23T16:55:40Z",
+        "question": "这一分钟为什么网络变慢，优先检查什么？"
+      },
+      "relevance": {
+        "runbook.telemetry.freshness": 2
+      }
+    }
+  ]
+}

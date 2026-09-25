@@ -1,0 +1,14 @@
+# Simulated Jev policy with real DashScope generation; requires a DashScope key.
+schema_version: 1
+profile: offline-fixture
+data_dir: ../../var/rag-jev-fixture
+knowledge_dir: ../knowledge
+knowledge: {allow_seed: false}
+telemetry: {source: replay}
+embedding: {provider: none}
+retrieval: {mode: bm25}
+generation: {provider: dashscope}
+decision:
+  provider: fixture
+  passage_gate_enabled: true
+  check_selection_enabled: true

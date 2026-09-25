@@ -1,0 +1,33 @@
+# Engineering validation on the existing 16 user-approved documents / 8 synthetic cases.
+# Knowledge approval is recorded separately in docs/reviews/rag-review-2026-09-24.json.
+schema_version: 1
+profile: gpu-quality
+data_dir: ../../var/rag-real-models
+knowledge_dir: ../knowledge
+knowledge: {allow_seed: false}
+telemetry: {source: replay}
+embedding:
+  provider: bge
+  model: BAAI/bge-m3
+  revision: 5617a9f61b028005a4858fdac845db406aefb181
+  device: cuda
+  dtype: float16
+  batch_size: 4
+  timeout_ms: 5000
+  local_files_only: true
+retrieval: {mode: hybrid}
+reranker:
+  enabled: true
+  model: BAAI/bge-reranker-v2-m3
+  revision: 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
+  device: cuda
+  batch_size: 4
+  timeout_ms: 10000
+  local_files_only: true
+generation:
+  provider: dashscope
+  model: qwen-plus
+  response_format: json_object
+  enable_thinking: false
+  max_output_tokens: 2000
+fallback: {allow_lexical_only: false}

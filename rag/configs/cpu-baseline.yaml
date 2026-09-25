@@ -1,0 +1,19 @@
+schema_version: 1
+profile: cpu-baseline
+data_dir: ../../var/rag-cpu
+knowledge_dir: ../knowledge
+telemetry:
+  source: replay
+embedding:
+  provider: bge
+  model: BAAI/bge-m3
+  revision: 5617a9f61b028005a4858fdac845db406aefb181
+  device: cpu
+  dtype: float32
+  local_files_only: true
+retrieval:
+  mode: hybrid
+reranker:
+  enabled: false
+generation:
+  provider: dashscope

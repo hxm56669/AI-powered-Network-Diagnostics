@@ -1,0 +1,31 @@
+# Opt-in TypeSafe validation against the same 16 user-approved entries / 8 synthetic cases.
+# Real Jev and DashScope with BM25 retrieval; both services require credentials.
+schema_version: 1
+profile: lexical-only
+data_dir: ../../var/rag-jev-validation
+knowledge_dir: ../knowledge
+knowledge: {allow_seed: false}
+telemetry: {source: replay}
+embedding: {provider: none}
+retrieval: {mode: bm25}
+generation: {provider: dashscope}
+decision:
+  provider: jev
+  endpoint: https://api.typesafe.ai/v1/systemone
+  model: jev-1.13.0
+  api_key_env: TYPESAFE_API_KEY
+  api_key_file_env: TYPESAFE_API_KEY_FILE
+  passage_gate_enabled: true
+  check_selection_enabled: true
+  max_passages: 12
+  max_check_candidates: 16
+  max_concurrency: 2
+  request_timeout_s: 2
+  total_timeout_s: 8
+  max_payload_bytes: 24000
+  retry_enabled: false
+  policy_version: network-decision-v1
+  thresholds:
+    min_choice_confidence: 0.80
+    exclude_relevance_below: 0.10
+    retain_counterevidence_at: 0.50

@@ -1,0 +1,23 @@
+schema_version: 1
+profile: gpu-quality
+data_dir: ../../var/rag-gpu
+knowledge_dir: ../knowledge
+telemetry:
+  source: logs
+embedding:
+  provider: bge
+  model: BAAI/bge-m3
+  revision: 5617a9f61b028005a4858fdac845db406aefb181
+  device: cuda
+  dtype: float16
+  local_files_only: true
+retrieval:
+  mode: hybrid
+reranker:
+  enabled: true
+  model: BAAI/bge-reranker-v2-m3
+  revision: 953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e
+  device: cuda
+  local_files_only: true
+generation:
+  provider: dashscope

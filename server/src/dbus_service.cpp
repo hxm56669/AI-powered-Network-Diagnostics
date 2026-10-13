@@ -108,8 +108,7 @@ bool DbusService::replyStringArray(DBusConnection* conn, DBusMessage* msg, const
 bool DbusService::handleListInterfaces(DBusConnection* conn, DBusMessage* msg) {
     std::vector<std::string> snapshot;
     {
-        std::lock_guard<std::mutex> lk(ctx_->iface_mutex);
-        snapshot = WeakNetMgr::namesOf(ctx_->iface_list);
+        snapshot = WeakNetMgr::namesOf(ctx_->weak_mgr->getCurrentInterfaces());
     }
     return replyStringArray(conn, msg, snapshot);
 }
@@ -117,8 +116,7 @@ bool DbusService::handleListInterfaces(DBusConnection* conn, DBusMessage* msg) {
 bool DbusService::handleHealthCheck(DBusConnection* conn, DBusMessage* msg) {
     std::vector<NetInfo> snapshot;
     {
-        std::lock_guard<std::mutex> lk(ctx_->iface_mutex);
-        snapshot = ctx_->iface_list;
+        snapshot = ctx_->weak_mgr->getCurrentInterfaces();
     }
 
     NetworkQualityAssessor assessor;
@@ -236,8 +234,7 @@ bool DbusService::handlePing(DBusConnection* conn, DBusMessage* msg) {
     // 获取当前上网网卡
     std::string currentIface;
     {
-        std::lock_guard<std::mutex> lk(ctx_->iface_mutex);
-        for (const auto& net : ctx_->iface_list) {
+        for (const auto& net : ctx_->weak_mgr->getCurrentInterfaces()) {
             if (net.usingNow()) {
                 currentIface = net.ifName();
                 break;

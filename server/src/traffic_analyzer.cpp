@@ -27,7 +27,7 @@ void TrafficAnalyzer::start(const std::string& interface, int interval_seconds) 
     interval_seconds_ = interval_seconds;
     
     // 设置eBPF对象路径
-    analyzer_->setBpfObjectPath("../build/flow_rate.bpf.o");
+    analyzer_->setBpfObjectPath("server/build/flow_rate.bpf.o");
     
     // 设置异常检测参数
     analyzer_->setAnomalyDetectionParams(

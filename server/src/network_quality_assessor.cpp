@@ -50,11 +50,14 @@ NetworkQualityResult NetworkQualityAssessor::assessInterfaceQuality(const NetInf
     // 计算各项指标分数
     double rttScore = calculateRttScore(interface.rttMs());
     double tcpLossScore = calculateTcpLossScore(interface.tcpLossRate());
-    double rssiScore = calculateRssiScore(interface.rssiDbm());
+    bool hasRssi = interface.rssiDbm() > -200 && interface.rssiDbm() < 0;
+    double rssiScore = hasRssi ? calculateRssiScore(interface.rssiDbm()) : 0.0;
     double trafficScore = calculateTrafficScore(interface);
     
     // 加权平均计算总分（权重可调整）
-    double totalScore = (rttScore * 0.3 + tcpLossScore * 0.3 + rssiScore * 0.2 + trafficScore * 0.2);
+    double totalScore = (rttScore * 0.3 + tcpLossScore * 0.3 +
+                         rssiScore * (hasRssi ? 0.2 : 0.0) +
+                         trafficScore * 0.2) / (hasRssi ? 1.0 : 0.8);
     
     // 根据分数确定质量等级
     if (totalScore >= 90) {
@@ -196,7 +199,7 @@ std::vector<std::string> NetworkQualityAssessor::detectNetworkIssues(const NetIn
     }
     
     // RSSI问题检测
-    if (interface.rssiDbm() != 0 && interface.rssiDbm() < thresholds_.rssi_fair) {
+    if (interface.rssiDbm() > -200 && interface.rssiDbm() < 0 && interface.rssiDbm() < thresholds_.rssi_fair) {
         issues.push_back("Weak signal: " + std::to_string(interface.rssiDbm()) + "dBm");
     }
     

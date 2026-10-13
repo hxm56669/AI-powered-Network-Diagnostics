@@ -216,7 +216,7 @@ static void start_traffic_analysis_thread(ServerContext* ctx) {
         if (!ctx->weak_mgr) ctx->weak_mgr = new WeakNetMgr();
         
         // 启动流量分析器（使用eth0作为默认接口）
-        ctx->weak_mgr->startTrafficAnalysis("eth0", 10);
+        ctx->weak_mgr->startTrafficAnalysis("ens33", 10);
         
         int loop_count = 0;
         while (ctx->running.load()) {

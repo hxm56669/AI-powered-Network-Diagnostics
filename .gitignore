@@ -10,3 +10,14 @@ rag/.coverage
 rag/htmlcov/
 rag/.cache/
 rag/dist/
+
+# Build artifacts
+/client/bin/test-client
+/client/lib/libweaknet.so
+/server/bin/weaknet-dbus-server
+/server/build/
+
+# Generated and temporary files
+/signal_changed.bin
+/server/vmlinux.h
+/server/src/*.bak

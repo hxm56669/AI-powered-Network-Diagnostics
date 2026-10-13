@@ -16,7 +16,15 @@ all: dirs $(BPF_TARGET) $(TARGET)
 dirs:
 	mkdir -p $(BIN_DIR) $(BUILD_DIR)
 
-$(BPF_TARGET): src/flow_rate.bpf.c
+VMLINUX_H=vmlinux.h
+
+$(VMLINUX_H):
+	@test -r /sys/kernel/btf/vmlinux || { echo "ERROR: kernel BTF not available"; exit 1; }
+	@command -v bpftool >/dev/null || { echo "ERROR: bpftool not installed"; exit 1; }
+	@bpftool btf dump file /sys/kernel/btf/vmlinux format c > $@.tmp || { rm -f $@.tmp; exit 1; }
+	@mv $@.tmp $@
+
+$(BPF_TARGET): src/flow_rate.bpf.c $(VMLINUX_H)
 	clang -g -O2 -target bpf -c $< -o $@
 
 $(TARGET): $(SRC) $(INC) $(BPF_TARGET)
